@@ -7,7 +7,7 @@ let timeOnline = {}
 const connectToSocket = (server) =>{
     const io = new Server(server,{
         cors:{
-            origin:"*",
+            origin:"https://video-confrencing-1-p8cq.onrender.com",
             methods:["GET","POST"],
             allowedHeaders:["*"],
             credentials:true
