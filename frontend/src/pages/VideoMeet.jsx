@@ -304,7 +304,7 @@ let gotMessageFromServer = async (fromId, message) => {
   try {
     if (signal.sdp) {
       const remoteDesc = new RTCSessionDescription(signal.sdp);
-      console.log('[incoming sdp]', fromId, remoteDesc.type, 'pc state', pc.signalingState);
+    //   console.log('[incoming sdp]', fromId, remoteDesc.type, 'pc state', pc.signalingState);
 
       // detect offer/answer collision
       const isOffer = remoteDesc.type === 'offer';
