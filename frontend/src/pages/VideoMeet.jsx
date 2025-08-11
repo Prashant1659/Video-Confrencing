@@ -39,7 +39,7 @@ export default function VideoMeetComponent() {
     let [screenAvailable, setScreenAvailable] = useState();
     let [messages,setMessages] = useState([]);
     let [message,setMessage] = useState("");
-    let [newMessages, setNewMessages] = useState(3);
+    let [newMessages, setNewMessages] = useState(0);
     let [askForUsername,setAskForUsername] = useState(true);
     let [username,setUsername] = useState("");
 
@@ -179,29 +179,28 @@ export default function VideoMeetComponent() {
         }
     },[audio,video])
 
-    let gotMessageFromServer = (fromId, message) => {
-        var signal = JSON.parse(message);
+    // let gotMessageFromServer = (fromId, message) => {
+    //     var signal = JSON.parse(message);
 
-        if (fromId !== socketIdRef.current) {
-            if (signal.sdp) {
-                connections[fromId].setRemoteDescription(new RTCSessionDescription(signal.sdp)).then(() => {
-                    // console.log('RTCSession : ',connections[fromId]);
-                    if (signal.sdp.type === 'offer') {
-                        connections[fromId].createAnswer().then((description) => {
-                            connections[fromId].setLocalDescription(description).then(() => {
-                                socketRef.current.emit('signal', fromId, JSON.stringify({ 'sdp': connections[fromId].localDescription }))
-                            }).catch(e => console.log(e))
-                        }).catch(e => console.log(e))
-                    }
-                }).catch(e => console.log(e))
-            }
+    //     if (fromId !== socketIdRef.current) {
+    //         if (signal.sdp) {
+    //             connections[fromId].setRemoteDescription(new RTCSessionDescription(signal.sdp)).then(() => {
+    //                 // console.log('RTCSession : ',connections[fromId]);
+    //                 if (signal.sdp.type === 'offer') {
+    //                     connections[fromId].createAnswer().then((description) => {
+    //                         connections[fromId].setLocalDescription(description).then(() => {
+    //                             socketRef.current.emit('signal', fromId, JSON.stringify({ 'sdp': connections[fromId].localDescription }))
+    //                         }).catch(e => console.log(e))
+    //                     }).catch(e => console.log(e))
+    //                 }
+    //             }).catch(e => console.log(e))
+    //         }
 
-            if (signal.ice) {
-                if(connections[fromId]?.remoteDescription?.type)
-                connections[fromId].addIceCandidate(new RTCIceCandidate(signal.ice)).catch(e => console.log(e))
-            }
-        }
-    }
+    //         if (signal.ice) {
+    //             connections[fromId].addIceCandidate(new RTCIceCandidate(signal.ice)).catch(e => console.log(e))
+    //         }
+    //     }
+    // }
 
     let addMessage = (data,sender, socketIdSender) =>{
         setMessages((prevMessages)=>[
@@ -228,79 +227,133 @@ export default function VideoMeetComponent() {
             socketRef.current.on('user-left',(id)=>{
                 setVideos((videos) => videos.filter((video) => video.socketId !== id))
             })
-            socketRef.current.on('user-joined',(id,clients) => {
-                clients.forEach((socketListId)=>{
+            socketRef.current.on('user-joined', (id, clients) => {
+    console.log("User joined:", id, "Existing clients:", clients);
 
-                    connections[socketListId] = new RTCPeerConnection(peerConfigConnections);
+    if (id === socketIdRef.current) {
+        // I am the new user
+        clients.forEach((clientId) => {
+            if (clientId === socketIdRef.current) return; // skip myself
+            
+            createPeerConnection(clientId, true); // true = create offer
+        });
+    } else {
+        // I am an existing user, create peer connection but wait for their offer
+        createPeerConnection(id, false); // false = wait for offer
+    }
+});
 
-                    connections[socketListId].onicecandidate = function (event){
-                        if(event.candidate != null){
-                            // console.log(connections[socketListId]);
-                            socketRef.current.emit('signal',socketListId,JSON.stringify({'ice':event.candidate}));
-                        }
-                    }
 
-                    connections[socketListId].onaddstream = (event) =>{
+function addOrUpdateVideo(socketId, stream) {
+    setVideos((prev) => {
+        const exists = prev.some((v) => v.socketId === socketId);
+        const updated = exists
+            ? prev.map((v) => (v.socketId === socketId ? { ...v, stream } : v))
+            : [...prev, { socketId, stream, autoPlay: true, playsinline: true }];
+        videoRef.current = updated;
+        return updated;
+    });
+}
 
-                        let ifVideoExists = videoRef.current.find(video => video.socketId === socketListId);
 
-
-                        if(ifVideoExists){
-                            setVideos(videos => {
-                                const updatedVideos = videos.map(video =>
-                                    video.socketId === socketListId ? {...video, stream:event.stream}:video
-                                );
-
-                                videoRef.current = updatedVideos;
-                                return updatedVideos;
-                            });
-                        }else{
-
-                            let newVideo = {
-                                socketId:socketListId,
-                                stream:event.stream,
-                                autoPlay:true,
-                                playsinline:true,
-                            }
-
-                            setVideos(videos => {
-                                const updatedVideos = [...videos,newVideo];
-                                videoRef.current = updatedVideos;
-                                return updatedVideos;
-                            });
-                        }
-                    };
-
-                    if(window.localStream !== undefined && window.localStream !== null){
-                        connections[socketListId].addStream(window.localStream);
-                    }else{
-                        //TODO blackSilence
-                        let blackSilence = (...args) => new MediaStream([black(...args),silence()]);
-                        window.localStream = blackSilence();
-                        connections[socketListId].addStream(window.localStream);
-                    }
-                })
-
-                if(id === socketIdRef.current){
-                    for( let id2 in connections){
-                        if(id2 === socketIdRef.current) continue
-                        try {
-                            connections[id2].addStream(window.localStream);
-                        } catch (err) {
-                            console.log("Error in user-joined",err)
-                        }
-                        connections[id2].createOffer().then((desc) => {
-                            connections[id2].setLocalDescription(desc)
-                            .then(()=>{
-                                socketRef.current.emit('signal',id2,JSON.stringify({'sdp':connections[id2].localDescription}))
-                            })
-                            .catch(err=>console.log(err))
-                        })
-                    }
-                }
-            })
         })
     }
+
+    // helper to create and store a PC with handlers
+function createPeerConnection(remoteId) {
+  if (connections[remoteId]) return connections[remoteId];
+
+  const pc = new RTCPeerConnection(peerConfigConnections);
+  connections[remoteId] = pc;
+
+  pc.onicecandidate = (ev) => {
+    if (ev.candidate) {
+      socketRef.current.emit('signal', remoteId, JSON.stringify({ ice: ev.candidate }));
+    }
+  };
+
+  // Prefer ontrack + addTrack (modern)
+  pc.ontrack = (ev) => {
+    const stream = ev.streams && ev.streams[0];
+    if (stream) {
+      setVideos(prev => {
+        const exists = prev.some(v => v.socketId === remoteId);
+        const updated = exists
+          ? prev.map(v => v.socketId === remoteId ? { ...v, stream } : v)
+          : [...prev, { socketId: remoteId, stream, autoPlay: true, playsinline: true }];
+        videoRef.current = updated;
+        return updated;
+      });
+    }
+  };
+
+  // add local tracks (if available) so offer contains m-lines
+  if (window.localStream) {
+    window.localStream.getTracks().forEach(track => pc.addTrack(track, window.localStream));
+  }
+
+  return pc;
+}
+    // robust signal handler
+let gotMessageFromServer = async (fromId, message) => {
+  const signal = JSON.parse(message);
+  if (fromId === socketIdRef.current) return; // ignore own signals
+
+  const pc = createPeerConnection(fromId);
+
+  try {
+    if (signal.sdp) {
+      const remoteDesc = new RTCSessionDescription(signal.sdp);
+      console.log('[incoming sdp]', fromId, remoteDesc.type, 'pc state', pc.signalingState);
+
+      // detect offer/answer collision
+      const isOffer = remoteDesc.type === 'offer';
+      const polite = socketIdRef.current > fromId; // deterministic "polite" decision
+
+      if (isOffer) {
+        const offerCollision = (pc.signalingState !== 'stable');
+        if (offerCollision && !polite) {
+          // impolite and in collision: ignore the incoming offer
+          console.warn('Offer collision & I am impolite — ignoring incoming offer from', fromId);
+          return;
+        }
+        if (offerCollision && polite) {
+          // polite: rollback local pending state
+          try {
+            await pc.setLocalDescription({ type: 'rollback' });
+          } catch (e) {
+            console.warn('rollback failed (maybe unsupported)', e);
+          }
+        }
+
+        // Accept the offer
+        await pc.setRemoteDescription(remoteDesc);
+        const answer = await pc.createAnswer();
+        await pc.setLocalDescription(answer);
+        socketRef.current.emit('signal', fromId, JSON.stringify({ sdp: pc.localDescription }));
+      } else if (remoteDesc.type === 'answer') {
+        // Only set answer if we previously created an offer
+        const haveLocalOffer = pc.signalingState === 'have-local-offer' ||
+                               (pc.localDescription && pc.localDescription.type === 'offer');
+        if (haveLocalOffer) {
+          await pc.setRemoteDescription(remoteDesc);
+        } else {
+          console.warn('Received answer but no local offer present — ignoring', fromId);
+        }
+      }
+    }
+
+    if (signal.ice) {
+      try {
+        await pc.addIceCandidate(new RTCIceCandidate(signal.ice));
+      } catch (err) {
+        console.warn('addIceCandidate failed', err);
+      }
+    }
+  } catch (err) {
+    console.error('Error handling signal from', fromId, err);
+  }
+};
     let getMedia = () =>{
         setVideo(videoAvailable);
         setAudio(audioAvailable);
